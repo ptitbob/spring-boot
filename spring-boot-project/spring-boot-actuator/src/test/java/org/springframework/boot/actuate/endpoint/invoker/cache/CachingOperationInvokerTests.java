@@ -16,17 +16,19 @@
 
 package org.springframework.boot.actuate.endpoint.invoker.cache;
 
+import java.security.Principal;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 
-import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.ExpectedException;
 
+import org.springframework.boot.actuate.endpoint.InvocationContext;
+import org.springframework.boot.actuate.endpoint.SecurityContext;
 import org.springframework.boot.actuate.endpoint.invoke.OperationInvoker;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
@@ -40,14 +42,11 @@ import static org.mockito.Mockito.verifyNoMoreInteractions;
  */
 public class CachingOperationInvokerTests {
 
-	@Rule
-	public final ExpectedException thrown = ExpectedException.none();
-
 	@Test
 	public void createInstanceWithTtlSetToZero() {
-		this.thrown.expect(IllegalArgumentException.class);
-		this.thrown.expectMessage("TimeToLive");
-		new CachingOperationInvoker(mock(OperationInvoker.class), 0);
+		assertThatIllegalArgumentException().isThrownBy(
+				() -> new CachingOperationInvoker(mock(OperationInvoker.class), 0))
+				.withMessageContaining("TimeToLive");
 	}
 
 	@Test
@@ -66,40 +65,61 @@ public class CachingOperationInvokerTests {
 	private void assertCacheIsUsed(Map<String, Object> parameters) {
 		OperationInvoker target = mock(OperationInvoker.class);
 		Object expected = new Object();
-		given(target.invoke(parameters)).willReturn(expected);
+		InvocationContext context = new InvocationContext(mock(SecurityContext.class),
+				parameters);
+		given(target.invoke(context)).willReturn(expected);
 		CachingOperationInvoker invoker = new CachingOperationInvoker(target, 500L);
-		Object response = invoker.invoke(parameters);
+		Object response = invoker.invoke(context);
 		assertThat(response).isSameAs(expected);
-		verify(target, times(1)).invoke(parameters);
-		Object cachedResponse = invoker.invoke(parameters);
+		verify(target, times(1)).invoke(context);
+		Object cachedResponse = invoker.invoke(context);
 		assertThat(cachedResponse).isSameAs(response);
 		verifyNoMoreInteractions(target);
 	}
 
 	@Test
-	public void targetAlwaysInvokedWithArguments() {
+	public void targetAlwaysInvokedWithParameters() {
 		OperationInvoker target = mock(OperationInvoker.class);
 		Map<String, Object> parameters = new HashMap<>();
 		parameters.put("test", "value");
 		parameters.put("something", null);
-		given(target.invoke(parameters)).willReturn(new Object());
+		InvocationContext context = new InvocationContext(mock(SecurityContext.class),
+				parameters);
+		given(target.invoke(context)).willReturn(new Object());
 		CachingOperationInvoker invoker = new CachingOperationInvoker(target, 500L);
-		invoker.invoke(parameters);
-		invoker.invoke(parameters);
-		invoker.invoke(parameters);
-		verify(target, times(3)).invoke(parameters);
+		invoker.invoke(context);
+		invoker.invoke(context);
+		invoker.invoke(context);
+		verify(target, times(3)).invoke(context);
+	}
+
+	@Test
+	public void targetAlwaysInvokedWithPrincipal() {
+		OperationInvoker target = mock(OperationInvoker.class);
+		Map<String, Object> parameters = new HashMap<>();
+		SecurityContext securityContext = mock(SecurityContext.class);
+		given(securityContext.getPrincipal()).willReturn(mock(Principal.class));
+		InvocationContext context = new InvocationContext(securityContext, parameters);
+		given(target.invoke(context)).willReturn(new Object());
+		CachingOperationInvoker invoker = new CachingOperationInvoker(target, 500L);
+		invoker.invoke(context);
+		invoker.invoke(context);
+		invoker.invoke(context);
+		verify(target, times(3)).invoke(context);
 	}
 
 	@Test
 	public void targetInvokedWhenCacheExpires() throws InterruptedException {
 		OperationInvoker target = mock(OperationInvoker.class);
 		Map<String, Object> parameters = new HashMap<>();
-		given(target.invoke(parameters)).willReturn(new Object());
+		InvocationContext context = new InvocationContext(mock(SecurityContext.class),
+				parameters);
+		given(target.invoke(context)).willReturn(new Object());
 		CachingOperationInvoker invoker = new CachingOperationInvoker(target, 50L);
-		invoker.invoke(parameters);
+		invoker.invoke(context);
 		Thread.sleep(55);
-		invoker.invoke(parameters);
-		verify(target, times(2)).invoke(parameters);
+		invoker.invoke(context);
+		verify(target, times(2)).invoke(context);
 	}
 
 }

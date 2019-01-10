@@ -1,5 +1,5 @@
 /*
- * Copyright 2012-2017 the original author or authors.
+ * Copyright 2012-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -56,6 +56,7 @@ import org.springframework.util.StringUtils;
  * @author Dave Syer
  * @author Eddú Meléndez
  * @author Kazuki Shimizu
+ * @author Mahmoud Ben Hassine
  */
 @Configuration
 @ConditionalOnClass({ JobLauncher.class, DataSource.class, JdbcOperations.class })
@@ -88,9 +89,10 @@ public class BatchAutoConfiguration {
 	@ConditionalOnMissingBean
 	@ConditionalOnProperty(prefix = "spring.batch.job", name = "enabled", havingValue = "true", matchIfMissing = true)
 	public JobLauncherCommandLineRunner jobLauncherCommandLineRunner(
-			JobLauncher jobLauncher, JobExplorer jobExplorer) {
+			JobLauncher jobLauncher, JobExplorer jobExplorer,
+			JobRepository jobRepository) {
 		JobLauncherCommandLineRunner runner = new JobLauncherCommandLineRunner(
-				jobLauncher, jobExplorer);
+				jobLauncher, jobExplorer, jobRepository);
 		String jobNames = this.properties.getJob().getNames();
 		if (StringUtils.hasText(jobNames)) {
 			runner.setJobNames(jobNames);
@@ -108,7 +110,7 @@ public class BatchAutoConfiguration {
 	@ConditionalOnMissingBean(JobOperator.class)
 	public SimpleJobOperator jobOperator(JobExplorer jobExplorer, JobLauncher jobLauncher,
 			ListableJobLocator jobRegistry, JobRepository jobRepository)
-					throws Exception {
+			throws Exception {
 		SimpleJobOperator factory = new SimpleJobOperator();
 		factory.setJobExplorer(jobExplorer);
 		factory.setJobLauncher(jobLauncher);

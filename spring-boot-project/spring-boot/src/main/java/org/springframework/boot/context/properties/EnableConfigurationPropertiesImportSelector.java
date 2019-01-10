@@ -1,5 +1,5 @@
 /*
- * Copyright 2012-2017 the original author or authors.
+ * Copyright 2012-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,13 +16,15 @@
 
 package org.springframework.boot.context.properties;
 
-import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
+import java.util.stream.Collectors;
 
+import org.springframework.beans.factory.BeanFactory;
 import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
-import org.springframework.beans.factory.support.AbstractBeanDefinition;
-import org.springframework.beans.factory.support.BeanDefinitionBuilder;
 import org.springframework.beans.factory.support.BeanDefinitionRegistry;
+import org.springframework.beans.factory.support.GenericBeanDefinition;
 import org.springframework.context.annotation.ImportBeanDefinitionRegistrar;
 import org.springframework.context.annotation.ImportSelector;
 import org.springframework.core.annotation.AnnotationUtils;
@@ -37,7 +39,7 @@ import org.springframework.util.StringUtils;
  * {@link ConfigurationProperties} bean or not, depending on whether the enclosing
  * {@link EnableConfigurationProperties} explicitly declares one. If none is declared then
  * a bean post processor will still kick in for any beans annotated as external
- * configuration. If one is declared then it a bean definition is registered with id equal
+ * configuration. If one is declared, then a bean definition is registered with id equal
  * to the class name (thus an application context usually only contains one
  * {@link ConfigurationProperties} bean of each unique type).
  *
@@ -47,19 +49,13 @@ import org.springframework.util.StringUtils;
  */
 class EnableConfigurationPropertiesImportSelector implements ImportSelector {
 
+	private static final String[] IMPORTS = {
+			ConfigurationPropertiesBeanRegistrar.class.getName(),
+			ConfigurationPropertiesBindingPostProcessorRegistrar.class.getName() };
+
 	@Override
 	public String[] selectImports(AnnotationMetadata metadata) {
-		MultiValueMap<String, Object> attributes = metadata.getAllAnnotationAttributes(
-				EnableConfigurationProperties.class.getName(), false);
-		Object[] type = attributes == null ? null
-				: (Object[]) attributes.getFirst("value");
-		if (type == null || type.length == 0) {
-			return new String[] {
-					ConfigurationPropertiesBindingPostProcessorRegistrar.class
-							.getName() };
-		}
-		return new String[] { ConfigurationPropertiesBeanRegistrar.class.getName(),
-				ConfigurationPropertiesBindingPostProcessorRegistrar.class.getName() };
+		return IMPORTS;
 	}
 
 	/**
@@ -71,71 +67,66 @@ class EnableConfigurationPropertiesImportSelector implements ImportSelector {
 		@Override
 		public void registerBeanDefinitions(AnnotationMetadata metadata,
 				BeanDefinitionRegistry registry) {
+			getTypes(metadata).forEach((type) -> register(registry,
+					(ConfigurableListableBeanFactory) registry, type));
+		}
+
+		private List<Class<?>> getTypes(AnnotationMetadata metadata) {
 			MultiValueMap<String, Object> attributes = metadata
 					.getAllAnnotationAttributes(
 							EnableConfigurationProperties.class.getName(), false);
-			List<Class<?>> types = collectClasses(attributes.get("value"));
-			for (Class<?> type : types) {
-				String prefix = extractPrefix(type);
-				String name = (StringUtils.hasText(prefix) ? prefix + "-" + type.getName()
-						: type.getName());
-				if (!containsBeanDefinition((ConfigurableListableBeanFactory) registry,
-						name)) {
-					registerBeanDefinition(registry, type, name);
-				}
+			return collectClasses((attributes != null) ? attributes.get("value")
+					: Collections.emptyList());
+		}
+
+		private List<Class<?>> collectClasses(List<?> values) {
+			return values.stream().flatMap((value) -> Arrays.stream((Object[]) value))
+					.map((o) -> (Class<?>) o).filter((type) -> void.class != type)
+					.collect(Collectors.toList());
+		}
+
+		private void register(BeanDefinitionRegistry registry,
+				ConfigurableListableBeanFactory beanFactory, Class<?> type) {
+			String name = getName(type);
+			if (!containsBeanDefinition(beanFactory, name)) {
+				registerBeanDefinition(registry, name, type);
 			}
 		}
 
-		private String extractPrefix(Class<?> type) {
+		private String getName(Class<?> type) {
 			ConfigurationProperties annotation = AnnotationUtils.findAnnotation(type,
 					ConfigurationProperties.class);
-			if (annotation != null) {
-				return annotation.prefix();
-			}
-			return "";
-		}
-
-		private List<Class<?>> collectClasses(List<Object> list) {
-			ArrayList<Class<?>> result = new ArrayList<>();
-			for (Object object : list) {
-				for (Object value : (Object[]) object) {
-					if (value instanceof Class && value != void.class) {
-						result.add((Class<?>) value);
-					}
-				}
-			}
-			return result;
-		}
-
-		private void registerBeanDefinition(BeanDefinitionRegistry registry,
-				Class<?> type, String name) {
-			BeanDefinitionBuilder builder = BeanDefinitionBuilder
-					.genericBeanDefinition(type);
-			AbstractBeanDefinition beanDefinition = builder.getBeanDefinition();
-			registry.registerBeanDefinition(name, beanDefinition);
-
-			ConfigurationProperties properties = AnnotationUtils.findAnnotation(type,
-					ConfigurationProperties.class);
-			Assert.notNull(properties,
-					"No " + ConfigurationProperties.class.getSimpleName()
-							+ " annotation found on  '" + type.getName() + "'.");
+			String prefix = (annotation != null) ? annotation.prefix() : "";
+			return (StringUtils.hasText(prefix) ? prefix + "-" + type.getName()
+					: type.getName());
 		}
 
 		private boolean containsBeanDefinition(
 				ConfigurableListableBeanFactory beanFactory, String name) {
-
-			boolean result = beanFactory.containsBeanDefinition(name);
-			if (result) {
+			if (beanFactory.containsBeanDefinition(name)) {
 				return true;
 			}
-			if (beanFactory
-					.getParentBeanFactory() instanceof ConfigurableListableBeanFactory) {
-				return containsBeanDefinition(
-						(ConfigurableListableBeanFactory) beanFactory
-								.getParentBeanFactory(),
+			BeanFactory parent = beanFactory.getParentBeanFactory();
+			if (parent instanceof ConfigurableListableBeanFactory) {
+				return containsBeanDefinition((ConfigurableListableBeanFactory) parent,
 						name);
 			}
 			return false;
+		}
+
+		private void registerBeanDefinition(BeanDefinitionRegistry registry, String name,
+				Class<?> type) {
+			assertHasAnnotation(type);
+			GenericBeanDefinition definition = new GenericBeanDefinition();
+			definition.setBeanClass(type);
+			registry.registerBeanDefinition(name, definition);
+		}
+
+		private void assertHasAnnotation(Class<?> type) {
+			Assert.notNull(
+					AnnotationUtils.findAnnotation(type, ConfigurationProperties.class),
+					() -> "No " + ConfigurationProperties.class.getSimpleName()
+							+ " annotation found on  '" + type.getName() + "'.");
 		}
 
 	}

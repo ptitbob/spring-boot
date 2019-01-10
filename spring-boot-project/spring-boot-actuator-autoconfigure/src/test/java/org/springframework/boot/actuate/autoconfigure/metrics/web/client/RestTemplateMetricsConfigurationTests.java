@@ -20,13 +20,13 @@ import io.micrometer.core.instrument.MeterRegistry;
 import org.junit.Rule;
 import org.junit.Test;
 
-import org.springframework.boot.actuate.autoconfigure.metrics.MetricsProperties;
-import org.springframework.boot.actuate.autoconfigure.metrics.MetricsRun;
+import org.springframework.boot.actuate.autoconfigure.metrics.test.MetricsRun;
 import org.springframework.boot.actuate.metrics.web.client.MetricsRestTemplateCustomizer;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.autoconfigure.web.client.RestTemplateAutoConfiguration;
+import org.springframework.boot.test.context.assertj.AssertableApplicationContext;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
-import org.springframework.boot.test.rule.OutputCapture;
+import org.springframework.boot.testsupport.rule.OutputCapture;
 import org.springframework.boot.web.client.RestTemplateBuilder;
 import org.springframework.http.HttpStatus;
 import org.springframework.test.web.client.MockRestServiceServer;
@@ -45,19 +45,19 @@ import static org.springframework.test.web.client.response.MockRestResponseCreat
 public class RestTemplateMetricsConfigurationTests {
 
 	private final ApplicationContextRunner contextRunner = new ApplicationContextRunner()
-			.with(MetricsRun.simple()).withConfiguration(
-					AutoConfigurations.of(RestTemplateAutoConfiguration.class));
+			.with(MetricsRun.simple())
+			.withConfiguration(AutoConfigurations.of(RestTemplateAutoConfiguration.class,
+					HttpClientMetricsAutoConfiguration.class));
 
 	@Rule
-	public OutputCapture out = new OutputCapture();
+	public final OutputCapture output = new OutputCapture();
 
 	@Test
 	public void restTemplateCreatedWithBuilderIsInstrumented() {
 		this.contextRunner.run((context) -> {
 			MeterRegistry registry = context.getBean(MeterRegistry.class);
-			RestTemplate restTemplate = context.getBean(RestTemplateBuilder.class)
-					.build();
-			validateRestTemplate(restTemplate, registry);
+			RestTemplateBuilder builder = context.getBean(RestTemplateBuilder.class);
+			validateRestTemplate(builder, registry);
 		});
 	}
 
@@ -65,45 +65,72 @@ public class RestTemplateMetricsConfigurationTests {
 	public void restTemplateCanBeCustomizedManually() {
 		this.contextRunner.run((context) -> {
 			assertThat(context).hasSingleBean(MetricsRestTemplateCustomizer.class);
-			RestTemplate restTemplate = new RestTemplateBuilder()
-					.customizers(context.getBean(MetricsRestTemplateCustomizer.class))
-					.build();
+			RestTemplateBuilder customBuilder = new RestTemplateBuilder()
+					.customizers(context.getBean(MetricsRestTemplateCustomizer.class));
 			MeterRegistry registry = context.getBean(MeterRegistry.class);
-			validateRestTemplate(restTemplate, registry);
+			validateRestTemplate(customBuilder, registry);
 		});
 	}
 
 	@Test
 	public void afterMaxUrisReachedFurtherUrisAreDenied() {
-		this.contextRunner.run((context) -> {
-			MetricsProperties properties = context.getBean(MetricsProperties.class);
-			int maxUriTags = properties.getWeb().getClient().getMaxUriTags();
-			MeterRegistry registry = context.getBean(MeterRegistry.class);
-			RestTemplate restTemplate = context.getBean(RestTemplateBuilder.class)
-					.build();
-			MockRestServiceServer server = MockRestServiceServer
-					.createServer(restTemplate);
-			for (int i = 0; i < maxUriTags + 10; i++) {
-				server.expect(requestTo("/test/" + i))
-						.andRespond(withStatus(HttpStatus.OK));
-			}
-			for (int i = 0; i < maxUriTags + 10; i++) {
-				restTemplate.getForObject("/test/" + i, String.class);
-			}
-			assertThat(registry.get("http.client.requests").meters()).hasSize(maxUriTags);
-			assertThat(this.out.toString())
-					.contains("Reached the maximum number of URI tags "
-							+ "for 'http.client.requests'");
-		});
+		this.contextRunner
+				.withPropertyValues("management.metrics.web.client.max-uri-tags=2")
+				.run((context) -> {
+					MeterRegistry registry = getInitializedMeterRegistry(context);
+					assertThat(registry.get("http.client.requests").meters()).hasSize(2);
+					assertThat(this.output.toString()).contains(
+							"Reached the maximum number of URI tags for 'http.client.requests'.");
+					assertThat(this.output.toString())
+							.contains("Are you using 'uriVariables'?");
+				});
 	}
 
-	private void validateRestTemplate(RestTemplate restTemplate, MeterRegistry registry) {
+	@Test
+	public void shouldNotDenyNorLogIfMaxUrisIsNotReached() {
+		this.contextRunner
+				.withPropertyValues("management.metrics.web.client.max-uri-tags=5")
+				.run((context) -> {
+					MeterRegistry registry = getInitializedMeterRegistry(context);
+					assertThat(registry.get("http.client.requests").meters()).hasSize(3);
+					assertThat(this.output.toString()).doesNotContain(
+							"Reached the maximum number of URI tags for 'http.client.requests'.");
+					assertThat(this.output.toString())
+							.doesNotContain("Are you using 'uriVariables'?");
+				});
+	}
+
+	private MeterRegistry getInitializedMeterRegistry(
+			AssertableApplicationContext context) {
+		MeterRegistry registry = context.getBean(MeterRegistry.class);
+		RestTemplate restTemplate = context.getBean(RestTemplateBuilder.class).build();
 		MockRestServiceServer server = MockRestServiceServer.createServer(restTemplate);
-		server.expect(requestTo("/test")).andRespond(withStatus(HttpStatus.OK));
+		for (int i = 0; i < 3; i++) {
+			server.expect(requestTo("/test/" + i)).andRespond(withStatus(HttpStatus.OK));
+		}
+		for (int i = 0; i < 3; i++) {
+			restTemplate.getForObject("/test/" + i, String.class);
+		}
+		return registry;
+	}
+
+	private void validateRestTemplate(RestTemplateBuilder builder,
+			MeterRegistry registry) {
+		RestTemplate restTemplate = mockRestTemplate(builder);
 		assertThat(registry.find("http.client.requests").meter()).isNull();
-		assertThat(restTemplate.getForEntity("/test", Void.class).getStatusCode())
-				.isEqualTo(HttpStatus.OK);
-		registry.get("http.client.requests").meter();
+		assertThat(restTemplate
+				.getForEntity("/projects/{project}", Void.class, "spring-boot")
+				.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(registry.get("http.client.requests").tags("uri", "/projects/{project}")
+				.meter()).isNotNull();
+	}
+
+	private RestTemplate mockRestTemplate(RestTemplateBuilder builder) {
+		RestTemplate restTemplate = builder.build();
+		MockRestServiceServer server = MockRestServiceServer.createServer(restTemplate);
+		server.expect(requestTo("/projects/spring-boot"))
+				.andRespond(withStatus(HttpStatus.OK));
+		return restTemplate;
 	}
 
 }

@@ -33,10 +33,10 @@ import org.springframework.boot.actuate.endpoint.annotation.Selector;
 import org.springframework.boot.actuate.endpoint.annotation.WriteOperation;
 import org.springframework.boot.actuate.endpoint.invoke.ParameterValueMapper;
 import org.springframework.boot.actuate.endpoint.invoke.convert.ConversionServiceParameterValueMapper;
+import org.springframework.boot.actuate.endpoint.web.EndpointLinksResolver;
+import org.springframework.boot.actuate.endpoint.web.EndpointMapping;
 import org.springframework.boot.actuate.endpoint.web.EndpointMediaTypes;
-import org.springframework.boot.actuate.endpoint.web.PathMapper;
 import org.springframework.boot.actuate.endpoint.web.annotation.WebEndpointDiscoverer;
-import org.springframework.boot.endpoint.web.EndpointMapping;
 import org.springframework.boot.web.embedded.tomcat.TomcatServletWebServerFactory;
 import org.springframework.boot.web.servlet.context.AnnotationConfigServletWebServerApplicationContext;
 import org.springframework.context.ApplicationContext;
@@ -94,36 +94,32 @@ public class CloudFoundryMvcWebEndpointIntegrationTests {
 
 	@Test
 	public void responseToOptionsRequestIncludesCorsHeaders() {
-		load(TestEndpointConfiguration.class,
-				(client) -> client.options().uri("/cfApplication/test")
-						.accept(MediaType.APPLICATION_JSON)
-						.header("Access-Control-Request-Method", "POST")
-						.header("Origin", "http://example.com").exchange().expectStatus()
-						.isOk().expectHeader()
-						.valueEquals("Access-Control-Allow-Origin", "http://example.com")
-						.expectHeader()
-						.valueEquals("Access-Control-Allow-Methods", "GET,POST"));
+		load(TestEndpointConfiguration.class, (client) -> client.options()
+				.uri("/cfApplication/test").accept(MediaType.APPLICATION_JSON)
+				.header("Access-Control-Request-Method", "POST")
+				.header("Origin", "http://example.com").exchange().expectStatus().isOk()
+				.expectHeader()
+				.valueEquals("Access-Control-Allow-Origin", "http://example.com")
+				.expectHeader().valueEquals("Access-Control-Allow-Methods", "GET,POST"));
 	}
 
 	@Test
 	public void linksToOtherEndpointsWithFullAccess() {
 		given(securityService.getAccessLevel(any(), eq("app-id")))
 				.willReturn(AccessLevel.FULL);
-		load(TestEndpointConfiguration.class,
-				(client) -> client.get().uri("/cfApplication")
-						.accept(MediaType.APPLICATION_JSON)
-						.header("Authorization", "bearer " + mockAccessToken()).exchange()
-						.expectStatus().isOk().expectBody().jsonPath("_links.length()")
-						.isEqualTo(5).jsonPath("_links.self.href").isNotEmpty()
-						.jsonPath("_links.self.templated").isEqualTo(false)
-						.jsonPath("_links.info.href").isNotEmpty()
-						.jsonPath("_links.info.templated").isEqualTo(false)
-						.jsonPath("_links.env.href").isNotEmpty()
-						.jsonPath("_links.env.templated").isEqualTo(false)
-						.jsonPath("_links.test.href").isNotEmpty()
-						.jsonPath("_links.test.templated").isEqualTo(false)
-						.jsonPath("_links.test-part.href").isNotEmpty()
-						.jsonPath("_links.test-part.templated").isEqualTo(true));
+		load(TestEndpointConfiguration.class, (client) -> client.get()
+				.uri("/cfApplication").accept(MediaType.APPLICATION_JSON)
+				.header("Authorization", "bearer " + mockAccessToken()).exchange()
+				.expectStatus().isOk().expectBody().jsonPath("_links.length()")
+				.isEqualTo(5).jsonPath("_links.self.href").isNotEmpty()
+				.jsonPath("_links.self.templated").isEqualTo(false)
+				.jsonPath("_links.info.href").isNotEmpty()
+				.jsonPath("_links.info.templated").isEqualTo(false)
+				.jsonPath("_links.env.href").isNotEmpty().jsonPath("_links.env.templated")
+				.isEqualTo(false).jsonPath("_links.test.href").isNotEmpty()
+				.jsonPath("_links.test.templated").isEqualTo(false)
+				.jsonPath("_links.test-part.href").isNotEmpty()
+				.jsonPath("_links.test-part.templated").isEqualTo(true));
 	}
 
 	@Test
@@ -167,14 +163,10 @@ public class CloudFoundryMvcWebEndpointIntegrationTests {
 	private void load(Class<?> configuration, Consumer<WebTestClient> clientConsumer) {
 		BiConsumer<ApplicationContext, WebTestClient> consumer = (context,
 				client) -> clientConsumer.accept(client);
-		AnnotationConfigServletWebServerApplicationContext context = createApplicationContext(
-				configuration, CloudFoundryMvcConfiguration.class);
-		try {
+		try (AnnotationConfigServletWebServerApplicationContext context = createApplicationContext(
+				configuration, CloudFoundryMvcConfiguration.class)) {
 			consumer.accept(context, WebTestClient.bindToServer()
 					.baseUrl("http://localhost:" + getPort(context)).build());
-		}
-		finally {
-			context.close();
 		}
 	}
 
@@ -211,7 +203,8 @@ public class CloudFoundryMvcWebEndpointIntegrationTests {
 			return new CloudFoundryWebEndpointServletHandlerMapping(
 					new EndpointMapping("/cfApplication"),
 					webEndpointDiscoverer.getEndpoints(), endpointMediaTypes,
-					corsConfiguration, interceptor);
+					corsConfiguration, interceptor,
+					new EndpointLinksResolver(webEndpointDiscoverer.getEndpoints()));
 		}
 
 		@Bean
@@ -221,8 +214,8 @@ public class CloudFoundryMvcWebEndpointIntegrationTests {
 			ParameterValueMapper parameterMapper = new ConversionServiceParameterValueMapper(
 					DefaultConversionService.getSharedInstance());
 			return new WebEndpointDiscoverer(applicationContext, parameterMapper,
-					endpointMediaTypes, PathMapper.useEndpointId(),
-					Collections.emptyList(), Collections.emptyList());
+					endpointMediaTypes, null, Collections.emptyList(),
+					Collections.emptyList());
 		}
 
 		@Bean

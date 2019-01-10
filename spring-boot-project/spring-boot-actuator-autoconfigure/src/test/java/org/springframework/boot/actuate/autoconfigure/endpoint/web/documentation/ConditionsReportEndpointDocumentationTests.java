@@ -54,7 +54,7 @@ public class ConditionsReportEndpointDocumentationTests
 		extends MockMvcEndpointDocumentationTests {
 
 	@Rule
-	public final JUnitRestDocumentation restDocumentation = new JUnitRestDocumentation();
+	public JUnitRestDocumentation restDocumentation = new JUnitRestDocumentation();
 
 	private MockMvc mockMvc;
 
@@ -63,7 +63,7 @@ public class ConditionsReportEndpointDocumentationTests
 
 	@Override
 	@Before
-	public void before() {
+	public void setup() {
 		this.mockMvc = MockMvcBuilders.webAppContextSetup(this.applicationContext)
 				.apply(MockMvcRestDocumentation
 						.documentationConfiguration(this.restDocumentation).uris())
@@ -100,8 +100,8 @@ public class ConditionsReportEndpointDocumentationTests
 		this.mockMvc.perform(get("/actuator/conditions")).andExpect(status().isOk())
 				.andDo(MockMvcRestDocumentation.document("conditions",
 						preprocessResponse(
-								limit("contexts", getApplicationContext().getId(),
-										"positiveMatches"),
+								limit("contexts", getApplicationContext()
+										.getId(), "positiveMatches"),
 								limit("contexts", getApplicationContext().getId(),
 										"negativeMatches")),
 						responseFields(fieldWithPath("contexts")

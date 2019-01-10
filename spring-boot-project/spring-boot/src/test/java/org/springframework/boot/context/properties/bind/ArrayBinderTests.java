@@ -1,5 +1,5 @@
 /*
- * Copyright 2012-2017 the original author or authors.
+ * Copyright 2012-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -38,7 +38,6 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isA;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.withSettings;
 
 /**
  * Tests for {@link ArrayBinder}.
@@ -76,8 +75,7 @@ public class ArrayBinderTests {
 	@Test
 	public void bindToCollectionShouldTriggerOnSuccess() {
 		this.sources.add(new MockConfigurationPropertySource("foo[0]", "1", "line1"));
-		BindHandler handler = mock(BindHandler.class,
-				withSettings().defaultAnswer(Answers.CALLS_REAL_METHODS));
+		BindHandler handler = mock(BindHandler.class, Answers.CALLS_REAL_METHODS);
 		this.binder.bind("foo", INTEGER_LIST, handler);
 		InOrder inOrder = inOrder(handler);
 		inOrder.verify(handler).onSuccess(eq(ConfigurationPropertyName.of("foo[0]")),
@@ -211,8 +209,7 @@ public class ArrayBinderTests {
 	@Test
 	public void bindToArrayShouldTriggerOnSuccess() {
 		this.sources.add(new MockConfigurationPropertySource("foo[0]", "1", "line1"));
-		BindHandler handler = mock(BindHandler.class,
-				withSettings().defaultAnswer(Answers.CALLS_REAL_METHODS));
+		BindHandler handler = mock(BindHandler.class, Answers.CALLS_REAL_METHODS);
 		Bindable<Integer[]> target = INTEGER_ARRAY;
 		this.binder.bind("foo", target, handler);
 		InOrder inOrder = inOrder(handler);
@@ -276,6 +273,27 @@ public class ArrayBinderTests {
 		this.sources.add(source);
 		String[] result = this.binder.bind("foo", Bindable.of(String[].class)).get();
 		assertThat(result).containsExactly("1", "2", "3");
+	}
+
+	@Test
+	public void bindToArrayShouldUsePropertyEditor() {
+		// gh-12166
+		MockConfigurationPropertySource source = new MockConfigurationPropertySource();
+		source.put("foo[0]", "java.lang.RuntimeException");
+		source.put("foo[1]", "java.lang.IllegalStateException");
+		this.sources.add(source);
+		assertThat(this.binder.bind("foo", Bindable.of(Class[].class)).get())
+				.containsExactly(RuntimeException.class, IllegalStateException.class);
+	}
+
+	@Test
+	public void bindToArrayWhenStringShouldUsePropertyEditor() {
+		// gh-12166
+		MockConfigurationPropertySource source = new MockConfigurationPropertySource();
+		source.put("foo", "java.lang.RuntimeException,java.lang.IllegalStateException");
+		this.sources.add(source);
+		assertThat(this.binder.bind("foo", Bindable.of(Class[].class)).get())
+				.containsExactly(RuntimeException.class, IllegalStateException.class);
 	}
 
 }

@@ -19,6 +19,7 @@ package org.springframework.boot.autoconfigure.session;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 
 import javax.annotation.PostConstruct;
 
@@ -27,6 +28,8 @@ import org.springframework.boot.WebApplicationType;
 import org.springframework.boot.autoconfigure.AutoConfigureAfter;
 import org.springframework.boot.autoconfigure.AutoConfigureBefore;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
+import org.springframework.boot.autoconfigure.condition.AnyNestedCondition;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
@@ -38,9 +41,14 @@ import org.springframework.boot.autoconfigure.data.redis.RedisReactiveAutoConfig
 import org.springframework.boot.autoconfigure.hazelcast.HazelcastAutoConfiguration;
 import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
 import org.springframework.boot.autoconfigure.jdbc.JdbcTemplateAutoConfiguration;
+import org.springframework.boot.autoconfigure.web.ServerProperties;
 import org.springframework.boot.autoconfigure.web.reactive.HttpHandlerAutoConfiguration;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.boot.context.properties.PropertyMapper;
+import org.springframework.boot.web.servlet.server.Session.Cookie;
 import org.springframework.context.ApplicationContext;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Conditional;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.ImportSelector;
@@ -48,6 +56,11 @@ import org.springframework.core.type.AnnotationMetadata;
 import org.springframework.session.ReactiveSessionRepository;
 import org.springframework.session.Session;
 import org.springframework.session.SessionRepository;
+import org.springframework.session.web.http.CookieHttpSessionIdResolver;
+import org.springframework.session.web.http.CookieSerializer;
+import org.springframework.session.web.http.DefaultCookieSerializer;
+import org.springframework.session.web.http.HttpSessionIdResolver;
+import org.springframework.util.StringUtils;
 
 /**
  * {@link EnableAutoConfiguration Auto-configuration} for Spring Session.
@@ -62,7 +75,7 @@ import org.springframework.session.SessionRepository;
 @Configuration
 @ConditionalOnClass(Session.class)
 @ConditionalOnWebApplication
-@EnableConfigurationProperties(SessionProperties.class)
+@EnableConfigurationProperties({ ServerProperties.class, SessionProperties.class })
 @AutoConfigureAfter({ DataSourceAutoConfiguration.class, HazelcastAutoConfiguration.class,
 		JdbcTemplateAutoConfiguration.class, MongoDataAutoConfiguration.class,
 		MongoReactiveDataAutoConfiguration.class, RedisAutoConfiguration.class,
@@ -75,6 +88,23 @@ public class SessionAutoConfiguration {
 	@Import({ ServletSessionRepositoryValidator.class,
 			SessionRepositoryFilterConfiguration.class })
 	static class ServletSessionConfiguration {
+
+		@Bean
+		@Conditional(DefaultCookieSerializerCondition.class)
+		public DefaultCookieSerializer cookieSerializer(
+				ServerProperties serverProperties) {
+			Cookie cookie = serverProperties.getServlet().getSession().getCookie();
+			DefaultCookieSerializer cookieSerializer = new DefaultCookieSerializer();
+			PropertyMapper map = PropertyMapper.get().alwaysApplyingWhenNonNull();
+			map.from(cookie::getName).to(cookieSerializer::setCookieName);
+			map.from(cookie::getDomain).to(cookieSerializer::setDomainName);
+			map.from(cookie::getPath).to(cookieSerializer::setCookiePath);
+			map.from(cookie::getHttpOnly).to(cookieSerializer::setUseHttpOnlyCookie);
+			map.from(cookie::getSecure).to(cookieSerializer::setUseSecureCookie);
+			map.from(cookie::getMaxAge).to((maxAge) -> cookieSerializer
+					.setCookieMaxAge((int) maxAge.getSeconds()));
+			return cookieSerializer;
+		}
 
 		@Configuration
 		@ConditionalOnMissingBean(SessionRepository.class)
@@ -102,6 +132,31 @@ public class SessionAutoConfiguration {
 	}
 
 	/**
+	 * Condition to trigger the creation of a {@link DefaultCookieSerializer}. This kicks
+	 * in if either no {@link HttpSessionIdResolver} and {@link CookieSerializer} beans
+	 * are registered, or if {@link CookieHttpSessionIdResolver} is registered but
+	 * {@link CookieSerializer} is not.
+	 */
+	static class DefaultCookieSerializerCondition extends AnyNestedCondition {
+
+		DefaultCookieSerializerCondition() {
+			super(ConfigurationPhase.REGISTER_BEAN);
+		}
+
+		@ConditionalOnMissingBean({ HttpSessionIdResolver.class, CookieSerializer.class })
+		static class NoComponentsAvailable {
+
+		}
+
+		@ConditionalOnBean(CookieHttpSessionIdResolver.class)
+		@ConditionalOnMissingBean(CookieSerializer.class)
+		static class CookieHttpSessionIdResolverAvailable {
+
+		}
+
+	}
+
+	/**
 	 * {@link ImportSelector} base class to add {@link StoreType} configuration classes.
 	 */
 	abstract static class SessionConfigurationImportSelector implements ImportSelector {
@@ -109,11 +164,11 @@ public class SessionAutoConfiguration {
 		protected final String[] selectImports(WebApplicationType webApplicationType) {
 			List<String> imports = new ArrayList<>();
 			StoreType[] types = StoreType.values();
-			for (int i = 0; i < types.length; i++) {
+			for (StoreType type : types) {
 				imports.add(SessionStoreMappings.getConfigurationClass(webApplicationType,
-						types[i]));
+						type));
 			}
-			return imports.toArray(new String[imports.size()]);
+			return StringUtils.toStringArray(imports);
 		}
 
 	}
@@ -189,6 +244,7 @@ public class SessionAutoConfiguration {
 				// Ignore
 			}
 		}
+
 	}
 
 	/**
@@ -246,13 +302,13 @@ public class SessionAutoConfiguration {
 		public void checkSessionRepository() {
 			StoreType storeType = this.sessionProperties.getStoreType();
 			if (storeType != StoreType.NONE
-					&& this.sessionRepositoryProvider.getIfAvailable() == null) {
-				if (storeType != null) {
-					throw new SessionRepositoryUnavailableException("No session "
-							+ "repository could be auto-configured, check your "
-							+ "configuration (session store type is '"
-							+ storeType.name().toLowerCase() + "')", storeType);
-				}
+					&& this.sessionRepositoryProvider.getIfAvailable() == null
+					&& storeType != null) {
+				throw new SessionRepositoryUnavailableException(
+						"No session repository could be auto-configured, check your "
+								+ "configuration (session store type is '"
+								+ storeType.name().toLowerCase(Locale.ENGLISH) + "')",
+						storeType);
 			}
 		}
 

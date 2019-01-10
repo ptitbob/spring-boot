@@ -27,13 +27,14 @@ import javax.servlet.http.HttpServletResponse;
 
 import org.springframework.boot.actuate.autoconfigure.cloudfoundry.AccessLevel;
 import org.springframework.boot.actuate.autoconfigure.cloudfoundry.SecurityResponse;
+import org.springframework.boot.actuate.endpoint.EndpointId;
 import org.springframework.boot.actuate.endpoint.web.EndpointLinksResolver;
+import org.springframework.boot.actuate.endpoint.web.EndpointMapping;
 import org.springframework.boot.actuate.endpoint.web.EndpointMediaTypes;
 import org.springframework.boot.actuate.endpoint.web.ExposableWebEndpoint;
 import org.springframework.boot.actuate.endpoint.web.Link;
 import org.springframework.boot.actuate.endpoint.web.WebOperation;
 import org.springframework.boot.actuate.endpoint.web.servlet.AbstractWebMvcEndpointHandlerMapping;
-import org.springframework.boot.endpoint.web.EndpointMapping;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ResponseBody;
@@ -46,62 +47,79 @@ import org.springframework.web.servlet.mvc.method.RequestMappingInfoHandlerMappi
  *
  * @author Madhura Bhave
  * @author Phillip Webb
+ * @author Brian Clozel
  */
 class CloudFoundryWebEndpointServletHandlerMapping
 		extends AbstractWebMvcEndpointHandlerMapping {
 
 	private final CloudFoundrySecurityInterceptor securityInterceptor;
 
-	private final EndpointLinksResolver linksResolver = new EndpointLinksResolver();
+	private final EndpointLinksResolver linksResolver;
 
 	CloudFoundryWebEndpointServletHandlerMapping(EndpointMapping endpointMapping,
 			Collection<ExposableWebEndpoint> endpoints,
 			EndpointMediaTypes endpointMediaTypes, CorsConfiguration corsConfiguration,
-			CloudFoundrySecurityInterceptor securityInterceptor) {
+			CloudFoundrySecurityInterceptor securityInterceptor,
+			EndpointLinksResolver linksResolver) {
 		super(endpointMapping, endpoints, endpointMediaTypes, corsConfiguration);
 		this.securityInterceptor = securityInterceptor;
+		this.linksResolver = linksResolver;
 	}
 
 	@Override
 	protected ServletWebOperation wrapServletWebOperation(ExposableWebEndpoint endpoint,
 			WebOperation operation, ServletWebOperation servletWebOperation) {
 		return new SecureServletWebOperation(servletWebOperation,
-				this.securityInterceptor, endpoint.getId());
+				this.securityInterceptor, endpoint.getEndpointId());
 	}
 
 	@Override
-	@ResponseBody
-	protected Map<String, Map<String, Link>> links(HttpServletRequest request,
-			HttpServletResponse response) {
-		SecurityResponse securityResponse = this.securityInterceptor.preHandle(request,
-				"");
-		if (!securityResponse.getStatus().equals(HttpStatus.OK)) {
-			sendFailureResponse(response, securityResponse);
-		}
-		AccessLevel accessLevel = (AccessLevel) request
-				.getAttribute(AccessLevel.REQUEST_ATTRIBUTE);
-		Map<String, Link> links = this.linksResolver.resolveLinks(getEndpoints(),
-				request.getRequestURL().toString());
-		Map<String, Link> filteredLinks = new LinkedHashMap<>();
-		if (accessLevel == null) {
-			return Collections.singletonMap("_links", filteredLinks);
-		}
-		filteredLinks = links.entrySet().stream()
-				.filter((e) -> e.getKey().equals("self")
-						|| accessLevel.isAccessAllowed(e.getKey()))
-				.collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
-		return Collections.singletonMap("_links", filteredLinks);
+	protected LinksHandler getLinksHandler() {
+		return new CloudFoundryLinksHandler();
 	}
 
-	private void sendFailureResponse(HttpServletResponse response,
-			SecurityResponse securityResponse) {
-		try {
-			response.sendError(securityResponse.getStatus().value(),
-					securityResponse.getMessage());
+	class CloudFoundryLinksHandler implements LinksHandler {
+
+		@Override
+		@ResponseBody
+		public Map<String, Map<String, Link>> links(HttpServletRequest request,
+				HttpServletResponse response) {
+			SecurityResponse securityResponse = CloudFoundryWebEndpointServletHandlerMapping.this.securityInterceptor
+					.preHandle(request, null);
+			if (!securityResponse.getStatus().equals(HttpStatus.OK)) {
+				sendFailureResponse(response, securityResponse);
+			}
+			AccessLevel accessLevel = (AccessLevel) request
+					.getAttribute(AccessLevel.REQUEST_ATTRIBUTE);
+			Map<String, Link> filteredLinks = new LinkedHashMap<>();
+			if (accessLevel == null) {
+				return Collections.singletonMap("_links", filteredLinks);
+			}
+			Map<String, Link> links = CloudFoundryWebEndpointServletHandlerMapping.this.linksResolver
+					.resolveLinks(request.getRequestURL().toString());
+			filteredLinks = links.entrySet().stream()
+					.filter((e) -> e.getKey().equals("self")
+							|| accessLevel.isAccessAllowed(e.getKey()))
+					.collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+			return Collections.singletonMap("_links", filteredLinks);
 		}
-		catch (Exception ex) {
-			this.logger.debug("Failed to send error response", ex);
+
+		@Override
+		public String toString() {
+			return "Actuator root web endpoint";
 		}
+
+		private void sendFailureResponse(HttpServletResponse response,
+				SecurityResponse securityResponse) {
+			try {
+				response.sendError(securityResponse.getStatus().value(),
+						securityResponse.getMessage());
+			}
+			catch (Exception ex) {
+				logger.debug("Failed to send error response", ex);
+			}
+		}
+
 	}
 
 	/**
@@ -113,10 +131,11 @@ class CloudFoundryWebEndpointServletHandlerMapping
 
 		private final CloudFoundrySecurityInterceptor securityInterceptor;
 
-		private final String endpointId;
+		private final EndpointId endpointId;
 
 		SecureServletWebOperation(ServletWebOperation delegate,
-				CloudFoundrySecurityInterceptor securityInterceptor, String endpointId) {
+				CloudFoundrySecurityInterceptor securityInterceptor,
+				EndpointId endpointId) {
 			this.delegate = delegate;
 			this.securityInterceptor = securityInterceptor;
 			this.endpointId = endpointId;
@@ -132,6 +151,7 @@ class CloudFoundryWebEndpointServletHandlerMapping
 			}
 			return this.delegate.handle(request, body);
 		}
+
 	}
 
 }

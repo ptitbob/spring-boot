@@ -16,14 +16,7 @@
 
 package org.springframework.boot.actuate.autoconfigure.metrics.web.client;
 
-import java.util.concurrent.atomic.AtomicBoolean;
-
-import io.micrometer.core.instrument.Meter.Id;
 import io.micrometer.core.instrument.MeterRegistry;
-import io.micrometer.core.instrument.config.MeterFilter;
-import io.micrometer.core.instrument.config.MeterFilterReply;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import org.springframework.boot.actuate.autoconfigure.metrics.MetricsProperties;
 import org.springframework.boot.actuate.metrics.web.client.DefaultRestTemplateExchangeTagsProvider;
@@ -33,19 +26,23 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.core.annotation.Order;
 import org.springframework.web.client.RestTemplate;
 
 /**
- * Configuration for {@link RestTemplate}-related metrics.
+ * Configure the instrumentation of {@link RestTemplate}.
  *
  * @author Jon Schneider
  * @author Phillip Webb
- * @since 2.0.0
  */
 @Configuration
-@ConditionalOnClass(name = "org.springframework.web.client.RestTemplate")
-public class RestTemplateMetricsConfiguration {
+@ConditionalOnClass(RestTemplate.class)
+class RestTemplateMetricsConfiguration {
+
+	private final MetricsProperties properties;
+
+	RestTemplateMetricsConfiguration(MetricsProperties properties) {
+		this.properties = properties;
+	}
 
 	@Bean
 	@ConditionalOnMissingBean(RestTemplateExchangeTagsProvider.class)
@@ -56,54 +53,9 @@ public class RestTemplateMetricsConfiguration {
 	@Bean
 	public MetricsRestTemplateCustomizer metricsRestTemplateCustomizer(
 			MeterRegistry meterRegistry,
-			RestTemplateExchangeTagsProvider restTemplateTagConfigurer,
-			MetricsProperties properties) {
+			RestTemplateExchangeTagsProvider restTemplateTagConfigurer) {
 		return new MetricsRestTemplateCustomizer(meterRegistry, restTemplateTagConfigurer,
-				properties.getWeb().getClient().getRequestsMetricName(),
-				properties.getWeb().getClient().isRecordRequestPercentiles());
-	}
-
-	@Bean
-	@Order(0)
-	public MeterFilter metricsWebClientUriTagFilter(MetricsProperties properties) {
-		String metricName = properties.getWeb().getClient().getRequestsMetricName();
-		MeterFilter denyFilter = new MaximumUriTagsReachedMeterFilter(metricName);
-		return MeterFilter.maximumAllowableTags(metricName, "uri",
-				properties.getWeb().getClient().getMaxUriTags(), denyFilter);
-	}
-
-	/**
-	 * {@link MeterFilter} to deny further client requests and log a warning.
-	 */
-	private static class MaximumUriTagsReachedMeterFilter implements MeterFilter {
-
-		private final Logger logger = LoggerFactory
-				.getLogger(RestTemplateMetricsConfiguration.class);
-
-		private final String metricName;
-
-		private final AtomicBoolean alreadyWarned = new AtomicBoolean(false);
-
-		MaximumUriTagsReachedMeterFilter(String metricName) {
-			this.metricName = metricName;
-		}
-
-		@Override
-		public MeterFilterReply accept(Id id) {
-			if (this.alreadyWarned.compareAndSet(false, true)) {
-				logWarning();
-			}
-			return MeterFilterReply.DENY;
-		}
-
-		private void logWarning() {
-			if (this.logger.isWarnEnabled()) {
-				this.logger.warn(
-						"Reached the maximum number of URI tags for '" + this.metricName
-								+ "'. Are you using uriVariables on RestTemplate calls?");
-			}
-		}
-
+				this.properties.getWeb().getClient().getRequestsMetricName());
 	}
 
 }

@@ -26,6 +26,7 @@ import java.util.concurrent.Callable;
 import org.gradle.api.Action;
 import org.gradle.api.Plugin;
 import org.gradle.api.Project;
+import org.gradle.api.Task;
 import org.gradle.api.file.FileCollection;
 import org.gradle.api.internal.artifacts.publish.ArchivePublishArtifact;
 import org.gradle.api.plugins.ApplicationPlugin;
@@ -64,7 +65,7 @@ final class JavaPluginAction implements PluginApplicationAction {
 		disableJarTask(project);
 		configureBuildTask(project);
 		BootJar bootJar = configureBootJarTask(project);
-		configureArtifactPublication(project, bootJar);
+		configureArtifactPublication(bootJar);
 		configureBootRunTask(project);
 		configureUtf8Encoding(project);
 		configureParametersCompilerArg(project);
@@ -98,7 +99,7 @@ final class JavaPluginAction implements PluginApplicationAction {
 		return bootJar;
 	}
 
-	private void configureArtifactPublication(Project project, BootJar bootJar) {
+	private void configureArtifactPublication(BootJar bootJar) {
 		ArchivePublishArtifact artifact = new ArchivePublishArtifact(bootJar);
 		this.singlePublishedArtifact.addCandidate(artifact);
 	}
@@ -140,46 +141,59 @@ final class JavaPluginAction implements PluginApplicationAction {
 	}
 
 	private void configureAdditionalMetadataLocations(Project project) {
-		project.afterEvaluate((evaluated) -> {
-			evaluated.getTasks().withType(JavaCompile.class,
-					(compile) -> configureAdditionalMetadataLocations(project, compile));
-		});
+		project.afterEvaluate((evaluated) -> evaluated.getTasks()
+				.withType(JavaCompile.class, this::configureAdditionalMetadataLocations));
 	}
 
-	private void configureAdditionalMetadataLocations(Project project,
-			JavaCompile compile) {
-		compile.doFirst((task) -> {
-			if (hasConfigurationProcessorOnClasspath(compile)) {
-				findMatchingSourceSet(compile).ifPresent((sourceSet) -> {
-					configureAdditionalMetadataLocations(compile, sourceSet);
-				});
+	private void configureAdditionalMetadataLocations(JavaCompile compile) {
+		compile.doFirst(new AdditionalMetadataLocationsConfigurer());
+	}
+
+	/**
+	 * Task {@link Action} to add additional meta-data locations. We need to use an
+	 * inner-class rather than a lambda due to
+	 * https://github.com/gradle/gradle/issues/5510.
+	 */
+	private static class AdditionalMetadataLocationsConfigurer implements Action<Task> {
+
+		@Override
+		public void execute(Task task) {
+			if (!(task instanceof JavaCompile)) {
+				return;
 			}
-		});
-	}
+			JavaCompile compile = (JavaCompile) task;
+			if (hasConfigurationProcessorOnClasspath(compile)) {
+				findMatchingSourceSet(compile).ifPresent(
+						(sourceSet) -> configureAdditionalMetadataLocations(compile,
+								sourceSet));
+			}
+		}
 
-	private Optional<SourceSet> findMatchingSourceSet(JavaCompile compile) {
-		return compile.getProject().getConvention().getPlugin(JavaPluginConvention.class)
-				.getSourceSets().stream().filter((sourceSet) -> sourceSet
-						.getCompileJavaTaskName().equals(compile.getName()))
-				.findFirst();
-	}
+		private boolean hasConfigurationProcessorOnClasspath(JavaCompile compile) {
+			Set<File> files = (compile.getOptions().getAnnotationProcessorPath() != null)
+					? compile.getOptions().getAnnotationProcessorPath().getFiles()
+					: compile.getClasspath().getFiles();
+			return files.stream().map(File::getName).anyMatch(
+					(name) -> name.startsWith("spring-boot-configuration-processor"));
+		}
 
-	private boolean hasConfigurationProcessorOnClasspath(JavaCompile compile) {
-		Set<File> files = compile.getOptions().getAnnotationProcessorPath() != null
-				? compile.getOptions().getAnnotationProcessorPath().getFiles()
-				: compile.getClasspath().getFiles();
-		return files.stream().map(File::getName)
-				.filter((name) -> name.startsWith("spring-boot-configuration-processor"))
-				.findFirst().isPresent();
-	}
+		private Optional<SourceSet> findMatchingSourceSet(JavaCompile compile) {
+			return compile
+					.getProject().getConvention().getPlugin(JavaPluginConvention.class)
+					.getSourceSets().stream().filter((sourceSet) -> sourceSet
+							.getCompileJavaTaskName().equals(compile.getName()))
+					.findFirst();
+		}
 
-	private void configureAdditionalMetadataLocations(JavaCompile compile,
-			SourceSet sourceSet) {
-		String locations = StringUtils
-				.collectionToCommaDelimitedString(sourceSet.getResources().getSrcDirs());
-		compile.getOptions().getCompilerArgs()
-				.add("-Aorg.springframework.boot.configurationprocessor.additionalMetadataLocations="
-						+ locations);
+		private void configureAdditionalMetadataLocations(JavaCompile compile,
+				SourceSet sourceSet) {
+			String locations = StringUtils.collectionToCommaDelimitedString(
+					sourceSet.getResources().getSrcDirs());
+			compile.getOptions().getCompilerArgs().add(
+					"-Aorg.springframework.boot.configurationprocessor.additionalMetadataLocations="
+							+ locations);
+		}
+
 	}
 
 }

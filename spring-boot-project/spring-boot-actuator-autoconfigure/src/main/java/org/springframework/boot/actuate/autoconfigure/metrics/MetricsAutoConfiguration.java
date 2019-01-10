@@ -16,42 +16,20 @@
 
 package org.springframework.boot.actuate.autoconfigure.metrics;
 
-import java.util.Collection;
-
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.Clock;
-import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.binder.MeterBinder;
 import io.micrometer.core.instrument.config.MeterFilter;
 
 import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.boot.actuate.autoconfigure.endpoint.condition.ConditionalOnEnabledEndpoint;
-import org.springframework.boot.actuate.autoconfigure.metrics.amqp.RabbitMetricsConfiguration;
-import org.springframework.boot.actuate.autoconfigure.metrics.cache.CacheMetricsConfiguration;
-import org.springframework.boot.actuate.autoconfigure.metrics.export.CompositeMeterRegistryConfiguration;
-import org.springframework.boot.actuate.autoconfigure.metrics.jdbc.DataSourcePoolMetricsConfiguration;
-import org.springframework.boot.actuate.autoconfigure.metrics.reactive.server.WebFluxMetricsConfiguration;
-import org.springframework.boot.actuate.autoconfigure.metrics.web.client.RestTemplateMetricsConfiguration;
-import org.springframework.boot.actuate.autoconfigure.metrics.web.servlet.WebMvcMetricsConfiguration;
-import org.springframework.boot.actuate.metrics.MetricsEndpoint;
-import org.springframework.boot.actuate.metrics.integration.SpringIntegrationMetrics;
-import org.springframework.boot.autoconfigure.AutoConfigureAfter;
+import org.springframework.boot.autoconfigure.AutoConfigureBefore;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
-import org.springframework.boot.autoconfigure.amqp.RabbitAutoConfiguration;
-import org.springframework.boot.autoconfigure.cache.CacheAutoConfiguration;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
-import org.springframework.boot.autoconfigure.condition.SearchStrategy;
-import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
-import org.springframework.boot.autoconfigure.web.client.RestTemplateAutoConfiguration;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.context.annotation.Import;
 import org.springframework.core.annotation.Order;
-import org.springframework.integration.config.EnableIntegrationManagement;
-import org.springframework.integration.support.management.IntegrationManagementConfigurer;
 
 /**
  * {@link EnableAutoConfiguration Auto-configuration} for Micrometer-based metrics.
@@ -63,33 +41,8 @@ import org.springframework.integration.support.management.IntegrationManagementC
 @Configuration
 @ConditionalOnClass(Timed.class)
 @EnableConfigurationProperties(MetricsProperties.class)
-@Import({ MeterBindersConfiguration.class, WebMvcMetricsConfiguration.class,
-		WebFluxMetricsConfiguration.class, RestTemplateMetricsConfiguration.class,
-		CacheMetricsConfiguration.class, DataSourcePoolMetricsConfiguration.class,
-		RabbitMetricsConfiguration.class, MeterRegistriesConfiguration.class,
-		CompositeMeterRegistryConfiguration.class })
-@AutoConfigureAfter({ CacheAutoConfiguration.class, DataSourceAutoConfiguration.class,
-		RabbitAutoConfiguration.class, RestTemplateAutoConfiguration.class })
+@AutoConfigureBefore(CompositeMeterRegistryAutoConfiguration.class)
 public class MetricsAutoConfiguration {
-
-	@Bean
-	public static MeterRegistryPostProcessor meterRegistryPostProcessor(
-			ObjectProvider<Collection<MeterBinder>> binders,
-			ObjectProvider<Collection<MeterFilter>> filters,
-			ObjectProvider<Collection<MeterRegistryCustomizer<?>>> customizers,
-			MetricsProperties properties) {
-		return new MeterRegistryPostProcessor(binders.getIfAvailable(),
-				filters.getIfAvailable(), customizers.getIfAvailable(),
-				properties.isUseGlobalRegistry());
-	}
-
-	@Bean
-	@ConditionalOnBean(MeterRegistry.class)
-	@ConditionalOnMissingBean
-	@ConditionalOnEnabledEndpoint
-	public MetricsEndpoint metricsEndpoint(MeterRegistry registry) {
-		return new MetricsEndpoint(registry);
-	}
 
 	@Bean
 	@ConditionalOnMissingBean
@@ -98,33 +51,19 @@ public class MetricsAutoConfiguration {
 	}
 
 	@Bean
+	public static MeterRegistryPostProcessor meterRegistryPostProcessor(
+			ObjectProvider<MeterBinder> meterBinders,
+			ObjectProvider<MeterFilter> meterFilters,
+			ObjectProvider<MeterRegistryCustomizer<?>> meterRegistryCustomizers,
+			ObjectProvider<MetricsProperties> metricsProperties) {
+		return new MeterRegistryPostProcessor(meterBinders, meterFilters,
+				meterRegistryCustomizers, metricsProperties);
+	}
+
+	@Bean
 	@Order(0)
 	public PropertiesMeterFilter propertiesMeterFilter(MetricsProperties properties) {
 		return new PropertiesMeterFilter(properties);
-	}
-
-	/**
-	 * Binds metrics from Spring Integration.
-	 */
-	@Configuration
-	@ConditionalOnClass(EnableIntegrationManagement.class)
-	static class MetricsIntegrationConfiguration {
-
-		@Bean(name = IntegrationManagementConfigurer.MANAGEMENT_CONFIGURER_NAME)
-		@ConditionalOnMissingBean(value = IntegrationManagementConfigurer.class, name = IntegrationManagementConfigurer.MANAGEMENT_CONFIGURER_NAME, search = SearchStrategy.CURRENT)
-		public IntegrationManagementConfigurer integrationManagementConfigurer() {
-			IntegrationManagementConfigurer configurer = new IntegrationManagementConfigurer();
-			configurer.setDefaultCountsEnabled(true);
-			configurer.setDefaultStatsEnabled(true);
-			return configurer;
-		}
-
-		@Bean
-		public SpringIntegrationMetrics springIntegrationMetrics(
-				IntegrationManagementConfigurer configurer) {
-			return new SpringIntegrationMetrics(configurer);
-		}
-
 	}
 
 }

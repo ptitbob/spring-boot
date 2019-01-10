@@ -179,11 +179,11 @@ public class Repackager {
 		if (this.layout == null) {
 			this.layout = getLayoutFactory().getLayout(this.source);
 		}
-		if (alreadyRepackaged()) {
-			return;
-		}
 		destination = destination.getAbsoluteFile();
 		File workingSource = this.source;
+		if (alreadyRepackaged() && this.source.equals(destination)) {
+			return;
+		}
 		if (this.source.equals(destination)) {
 			workingSource = getBackupFile();
 			workingSource.delete();
@@ -270,8 +270,8 @@ public class Repackager {
 	}
 
 	private boolean isZip(InputStream inputStream) throws IOException {
-		for (int i = 0; i < ZIP_FILE_HEADER.length; i++) {
-			if (inputStream.read() != ZIP_FILE_HEADER[i]) {
+		for (byte magicByte : ZIP_FILE_HEADER) {
+			if (inputStream.read() != magicByte) {
 				return false;
 			}
 		}
@@ -423,13 +423,14 @@ public class Repackager {
 			libraries.doWithLibraries((library) -> {
 				if (isZip(library.getFile())) {
 					String libraryDestination = Repackager.this.layout
-							.getLibraryDestination(library.getName(), library.getScope())
-							+ library.getName();
-					Library existing = this.libraryEntryNames
-							.putIfAbsent(libraryDestination, library);
-					if (existing != null) {
-						throw new IllegalStateException(
-								"Duplicate library " + library.getName());
+							.getLibraryDestination(library.getName(), library.getScope());
+					if (libraryDestination != null) {
+						Library existing = this.libraryEntryNames.putIfAbsent(
+								libraryDestination + library.getName(), library);
+						if (existing != null) {
+							throw new IllegalStateException(
+									"Duplicate library " + library.getName());
+						}
 					}
 				}
 			});

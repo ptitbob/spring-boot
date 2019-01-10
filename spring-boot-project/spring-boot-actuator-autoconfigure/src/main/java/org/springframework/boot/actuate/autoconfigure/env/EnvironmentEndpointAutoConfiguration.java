@@ -1,5 +1,5 @@
 /*
- * Copyright 2012-2017 the original author or authors.
+ * Copyright 2012-2019 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -35,6 +35,7 @@ import org.springframework.core.env.Environment;
  * @since 2.0.0
  */
 @Configuration
+@ConditionalOnEnabledEndpoint(endpoint = EnvironmentEndpoint.class)
 @EnableConfigurationProperties(EnvironmentEndpointProperties.class)
 public class EnvironmentEndpointAutoConfiguration {
 
@@ -47,7 +48,6 @@ public class EnvironmentEndpointAutoConfiguration {
 
 	@Bean
 	@ConditionalOnMissingBean
-	@ConditionalOnEnabledEndpoint
 	public EnvironmentEndpoint environmentEndpoint(Environment environment) {
 		EnvironmentEndpoint endpoint = new EnvironmentEndpoint(environment);
 		String[] keysToSanitize = this.properties.getKeysToSanitize();
@@ -59,9 +59,8 @@ public class EnvironmentEndpointAutoConfiguration {
 
 	@Bean
 	@ConditionalOnMissingBean
-	@ConditionalOnEnabledEndpoint
 	@ConditionalOnBean(EnvironmentEndpoint.class)
-	public EnvironmentEndpointWebExtension environmentWebEndpointExtension(
+	public EnvironmentEndpointWebExtension environmentEndpointWebExtension(
 			EnvironmentEndpoint environmentEndpoint) {
 		return new EnvironmentEndpointWebExtension(environmentEndpoint);
 	}

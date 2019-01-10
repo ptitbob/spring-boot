@@ -67,10 +67,10 @@ public class SessionsEndpointDocumentationTests
 	private static final Session sessionThree = createSession(
 			Instant.now().minusSeconds(60 * 60 * 2), Instant.now().minusSeconds(12));
 
-	private static final List<FieldDescriptor> sessionFields = Arrays
-			.asList(fieldWithPath("id").description("ID of the session."),
-					fieldWithPath("attributeNames").description(
-							"Names of the attributes stored in the session."),
+	private static final List<FieldDescriptor> sessionFields = Arrays.asList(
+			fieldWithPath("id").description("ID of the session."),
+			fieldWithPath("attributeNames")
+					.description("Names of the attributes stored in the session."),
 			fieldWithPath("creationTime")
 					.description("Timestamp of when the session was created."),
 			fieldWithPath("lastAccessedTime")
@@ -89,9 +89,7 @@ public class SessionsEndpointDocumentationTests
 		sessions.put(sessionOne.getId(), sessionOne);
 		sessions.put(sessionTwo.getId(), sessionTwo);
 		sessions.put(sessionThree.getId(), sessionThree);
-		given(this.sessionRepository.findByIndexNameAndIndexValue(
-				FindByIndexNameSessionRepository.PRINCIPAL_NAME_INDEX_NAME, "alice"))
-						.willReturn(sessions);
+		given(this.sessionRepository.findByPrincipalName("alice")).willReturn(sessions);
 		this.mockMvc.perform(get("/actuator/sessions").param("username", "alice"))
 				.andExpect(status().isOk())
 				.andDo(document("sessions/username",
